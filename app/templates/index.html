@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transient — Live Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { background:#f7f8fa; }
+    .chart-wrap { height: 320px; }
+    @media (max-width: 640px) { .chart-wrap { height: 250px; } }
+  </style>
+</head>
+<body class="min-h-screen text-slate-800 antialiased">
+  <header class="border-b border-slate-200 bg-white">
+    <div class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
+      <div class="flex items-center gap-3">
+        <div class="grid h-9 w-9 place-items-center rounded-xl bg-indigo-600 text-white">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l3-8 4 16 3-8h4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div><p class="text-sm font-semibold tracking-tight">Transient</p><p class="text-xs text-slate-500">Real-time signal analyzer</p></div>
+      </div>
+      <div class="flex items-center gap-2"><span id="statusDot" class="h-2 w-2 rounded-full bg-slate-300"></span><span id="connectionText" class="text-xs font-medium text-slate-500">Disconnected</span></div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-7xl px-5 py-8 sm:px-8">
+    <div class="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+      <div><p class="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-indigo-600">Measurement workspace</p><h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Transient response</h1><p class="mt-1 text-sm text-slate-500">Monitor voltage and current as your hardware responds.</p></div>
+      <div class="flex flex-wrap gap-2">
+        <button id="connectBtn" class="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700">Connect device</button>
+        <button id="demoBtn" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50">Run demo</button>
+        <button id="stopBtn" class="hidden rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Stop</button>
+      </div>
+    </div>
+
+    <div class="mb-5 grid gap-4 sm:grid-cols-3">
+      <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div class="flex items-center justify-between"><span class="text-sm text-slate-500">Voltage</span><span class="rounded-md bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700">LIVE</span></div><div class="mt-4 flex items-baseline gap-2"><span id="voltageValue" class="text-3xl font-semibold tracking-tight">—</span><span class="text-sm text-slate-500">V</span></div><p class="mt-2 text-xs text-slate-400">Instantaneous measurement</p></section>
+      <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div class="flex items-center justify-between"><span class="text-sm text-slate-500">Current</span><span class="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">LIVE</span></div><div class="mt-4 flex items-baseline gap-2"><span id="currentValue" class="text-3xl font-semibold tracking-tight">—</span><span class="text-sm text-slate-500">A</span></div><p class="mt-2 text-xs text-slate-400">Instantaneous measurement</p></section>
+      <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div class="flex items-center justify-between"><span class="text-sm text-slate-500">Samples received</span><span class="text-xs text-slate-400">SESSION</span></div><div class="mt-4 flex items-baseline gap-2"><span id="sampleCount" class="text-3xl font-semibold tracking-tight">0</span><span class="text-sm text-slate-500">points</span></div><p id="lastUpdate" class="mt-2 text-xs text-slate-400">Waiting for data</p></section>
+    </div>
+
+    <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div class="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 class="text-sm font-semibold">Live waveform</h2><p class="mt-1 text-xs text-slate-500">Voltage and current over time</p></div><div class="flex gap-4 text-xs text-slate-600"><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full bg-indigo-500"></i>Voltage (V)</span><span class="flex items-center gap-2"><i class="h-2 w-2 rounded-full bg-emerald-500"></i>Current (A)</span></div></div>
+      <div class="chart-wrap"><canvas id="waveChart" aria-label="Live voltage and current waveform"></canvas></div>
+      <div class="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-xs text-slate-400"><span>Showing most recent 120 samples</span><span id="deviceLabel">No device connected</span></div>
+    </section>
+    <p class="mt-5 text-center text-xs text-slate-400">BLE data is read in this browser and relayed to the local Python service.</p>
+  </main>
+  <script>
+    const SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
+    const CHARACTERISTIC_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
+    const points = { labels: [], voltage: [], current: [] };
+    const ctx = document.getElementById('waveChart');
+    const chart = new Chart(ctx, { type:'line', data:{ labels:points.labels, datasets:[
+      {label:'Voltage (V)',data:points.voltage,borderColor:'#6366f1',backgroundColor:'#6366f1',borderWidth:2,pointRadius:0,tension:.18,yAxisID:'y'},
+      {label:'Current (A)',data:points.current,borderColor:'#10b981',backgroundColor:'#10b981',borderWidth:2,pointRadius:0,tension:.18,yAxisID:'y1'}
+    ]}, options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{maxTicksLimit:7,color:'#94a3b8',font:{size:10}}},y:{position:'left',grid:{color:'#f1f5f9'},ticks:{color:'#94a3b8',font:{size:10}},title:{display:true,text:'V',color:'#6366f1'}},y1:{position:'right',grid:{drawOnChartArea:false},ticks:{color:'#94a3b8',font:{size:10}},title:{display:true,text:'A',color:'#10b981'}}}}});
+    let sampleCount=0, demoTimer=null, bleDevice=null, sampleBuffer='';
+    const el=id=>document.getElementById(id);
+    function setStatus(text,active){el('connectionText').textContent=text;el('statusDot').className=`h-2 w-2 rounded-full ${active?'bg-emerald-500':'bg-slate-300'}`;}
+    async function acceptSample(s){
+      if(!Number.isFinite(Number(s.voltage))||!Number.isFinite(Number(s.current))) return;
+      const now=new Date(); const label=now.toLocaleTimeString([], {minute:'2-digit',second:'2-digit',fractionalSecondDigits:1});
+      points.labels.push(label);points.voltage.push(Number(s.voltage));points.current.push(Number(s.current));
+      if(points.labels.length>120){points.labels.shift();points.voltage.shift();points.current.shift();}
+      chart.update('none');sampleCount++;el('sampleCount').textContent=sampleCount.toLocaleString();el('voltageValue').textContent=Number(s.voltage).toFixed(3);el('currentValue').textContent=Number(s.current).toFixed(3);el('lastUpdate').textContent=`Updated ${now.toLocaleTimeString()}`;
+      try{await fetch('/api/v1/samples',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...s,timestamp:s.timestamp||now.toISOString()})});}catch(e){/* UI remains usable if the API is offline. */}
+    }
+    function parseLine(line){try{const s=JSON.parse(line);if('voltage'in s&&'current'in s)acceptSample(s);}catch(e){console.warn('Ignoring invalid BLE JSON line',line);}}
+    function handleNotification(event){const bytes=new Uint8Array(event.target.value.buffer);sampleBuffer+=new TextDecoder().decode(bytes);let lines=sampleBuffer.split(/\r?\n/);sampleBuffer=lines.pop()||'';lines.forEach(parseLine);}
+    el('connectBtn').addEventListener('click',async()=>{
+      if(!navigator.bluetooth){alert('Web Bluetooth needs Chrome or Edge on HTTPS or localhost.');return;}
+      try{bleDevice=await navigator.bluetooth.requestDevice({filters:[{services:[SERVICE_UUID]}],optionalServices:[SERVICE_UUID]});
+        bleDevice.addEventListener('gattserverdisconnected',()=>setStatus('Disconnected',false));
+        const server=await bleDevice.gatt.connect(),service=await server.getPrimaryService(SERVICE_UUID),characteristic=await service.getCharacteristic(CHARACTERISTIC_UUID);
+        await characteristic.startNotifications();characteristic.addEventListener('characteristicvaluechanged',handleNotification);
+        setStatus('BLE connected',true);el('deviceLabel').textContent=bleDevice.name||'BLE device';
+      }catch(e){if(e.name!=='NotFoundError')alert(`Could not connect: ${e.message}`);}
+    });
+    el('demoBtn').addEventListener('click',()=>{if(demoTimer)return;setStatus('Demo running',true);el('deviceLabel').textContent='Simulated sensor';let t=0;demoTimer=setInterval(()=>{t+=.05;const v=3.3*Math.exp(-t*1.7)*Math.cos(t*14)+.03*(Math.random()-.5);const i=.45*Math.exp(-t*1.7)*Math.sin(t*14)+.01*(Math.random()-.5);acceptSample({voltage:v,current:i,sequence:sampleCount+1,device_id:'demo'});if(t>8)t=0;},100);el('stopBtn').classList.remove('hidden');});
+    el('stopBtn').addEventListener('click',()=>{clearInterval(demoTimer);demoTimer=null;el('stopBtn').classList.add('hidden');setStatus(bleDevice?.gatt?.connected?'BLE connected':'Disconnected',Boolean(bleDevice?.gatt?.connected));});
+  </script>
+</body>
+</html>
